@@ -1,0 +1,284 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "client"   // no Rust engine binary: queries run through the pg driver adapter (see src/db.ts)
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum TargetStatus {
+  SCHEDULED
+  QUEUED
+  PUBLISHING
+  PUBLISHED
+  RETRYING
+  NEEDS_RECONNECT
+  FAILED
+  BLOCKED
+  CANCELLED
+}
+
+model SocialAccount {
+  id              String   @id @default(uuid()) @db.Uuid
+  ownerId         String   @map("owner_id")
+  platform        String
+  externalId      String   @map("external_id")
+  displayName     String   @map("display_name")
+  accessTokenEnc  String   @map("access_token_enc")
+  refreshTokenEnc String?  @map("refresh_token_enc")
+  expiresAt       DateTime? @map("expires_at")
+  status          String   @default("CONNECTED") // CONNECTED | NEEDS_RECONNECT
+  targets         PostTarget[]
+  @@unique([ownerId, platform, externalId])
+  @@map("social_accounts")
+}
+
+model Post {
+  id          String   @id @default(uuid()) @db.Uuid
+  ownerId     String   @map("owner_id")
+  body        String
+  assetId     String?  @map("asset_id")
+  scheduledAt DateTime? @map("scheduled_at")  // UTC
+  timezone    String?                         // IANA name
+  createdAt   DateTime @default(now()) @map("created_at")
+  idempotencyKey String? @map("idempotency_key")
+  author      UserProfile? @relation(fields: [ownerId], references: [id])
+  media       PostMedia[]
+  targets     PostTarget[]
+  socialEngagements SocialMediaEngagement[]
+  likes       PostLike[]
+  comments    PostComment[]
+  shares      PostShare[]
+  @@unique([ownerId, idempotencyKey])
+  @@map("posts")
+}
+
+model PostMedia {
+  id          String @id @default(uuid()) @db.Uuid
+  postId      String @db.Uuid @map("post_id")
+  storagePath String @map("storage_path")
+  mime        String
+  width       Int
+  height      Int
+  bytes       Int
+  post        Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  @@map("post_media")
+}
+
+model PostTarget {
+  id             String   @id @default(uuid()) @db.Uuid
+  postId         String   @db.Uuid @map("post_id")
+  accountId      String   @db.Uuid @map("account_id")
+  bodyOverride   String?  @map("body_override")
+  idempotencyKey String   @unique @map("idempotency_key")
+  status         TargetStatus @default(QUEUED)
+  attemptCount   Int      @default(0) @map("attempt_count")
+  nextAttemptAt  DateTime @default(now()) @map("next_attempt_at")
+  lockedBy       String?  @map("locked_by")
+  lockedAt       DateTime? @map("locked_at")
+  externalId     String?  @map("external_id")
+  externalUrl    String?  @map("external_url")
+  lastErrorClass String?  @map("last_error_class")
+  lastError      String?  @map("last_error")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+  post           Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  account        SocialAccount @relation(fields: [accountId], references: [id])
+  attempts       PublishAttempt[]
+  socialEngagement SocialMediaEngagement?
+  @@index([status, nextAttemptAt])
+  @@map("post_targets")
+}
+
+model PublishAttempt {
+  id         String   @id @default(uuid()) @db.Uuid
+  targetId   String   @db.Uuid @map("target_id")
+  startedAt  DateTime @default(now()) @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  httpStatus Int?     @map("http_status")
+  errorClass String?  @map("error_class")
+  errorCode  String?  @map("error_code")
+  reason     String?  // never contains tokens
+  target     PostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  @@map("publish_attempts")
+}
+
+model RateBucket {
+  accountId  String   @db.Uuid @map("account_id")
+  platform   String
+  tokens     Float
+  refilledAt DateTime @map("refilled_at")
+  @@id([accountId, platform])
+  @@map("rate_buckets")
+}
+
+model AssetPublishEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  assetId     String   @map("asset_id")
+  targetId    String   @unique @db.Uuid @map("target_id") // unique => exactly one event per publish
+  platform    String
+  url         String
+  publishedAt DateTime @map("published_at")
+  deliveredAt DateTime? @map("delivered_at")
+  @@map("asset_publish_events")
+}
+
+model OAuthState {
+  state        String   @id
+  ownerId      String   @map("owner_id")
+  platform     String
+  codeVerifier String   @map("code_verifier")
+  expiresAt    DateTime @map("expires_at")
+  @@map("oauth_states")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  ownerId   String   @map("owner_id")
+  action    String   // connect, disconnect, publish, retry, delete
+  detail    String?
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("audit_log")
+}
+
+model UserProfile {
+  id          String        @id
+  email       String
+  displayName String        @map("display_name")
+  avatarUrl   String?       @map("avatar_url")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at")
+
+  posts       Post[]
+  likes       PostLike[]
+  comments    PostComment[]
+  sharesSent  PostShare[]   @relation("SharesSent")
+  sharesRecv  PostShare[]   @relation("SharesRecv")
+
+  @@map("user_profiles")
+}
+
+model PostLike {
+  id        String      @id @default(uuid()) @db.Uuid
+  postId    String      @db.Uuid @map("post_id")
+  userId    String      @map("user_id")
+  createdAt DateTime    @default(now()) @map("created_at")
+  post      Post        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([postId])
+  @@index([userId])
+  @@map("post_likes")
+}
+
+model PostComment {
+  id        String      @id @default(uuid()) @db.Uuid
+  postId    String      @db.Uuid @map("post_id")
+  userId    String      @map("user_id")
+  content   String
+  createdAt DateTime    @default(now()) @map("created_at")
+  post      Post        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      UserProfile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([userId])
+  @@map("post_comments")
+}
+
+model PostShare {
+  id             String      @id @default(uuid()) @db.Uuid
+  postId         String      @db.Uuid @map("post_id")
+  sharedByUserId String      @map("shared_by_user_id")
+  sharedToUserId String      @map("shared_to_user_id")
+  note           String?
+  createdAt      DateTime    @default(now()) @map("created_at")
+  post           Post        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  sharedBy       UserProfile @relation("SharesSent", fields: [sharedByUserId], references: [id], onDelete: Cascade)
+  sharedTo       UserProfile @relation("SharesRecv", fields: [sharedToUserId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([sharedByUserId])
+  @@index([sharedToUserId])
+  @@map("post_shares")
+}
+
+model SocialMediaEngagement {
+  id            String   @id @default(uuid()) @db.Uuid
+  targetId      String   @unique @db.Uuid @map("target_id")
+  postId        String   @db.Uuid @map("post_id")
+  platform      String
+  likesCount    Int      @default(0) @map("likes_count")
+  commentsCount Int      @default(0) @map("comments_count")
+  sharesCount   Int      @default(0) @map("shares_count")
+  viewsCount    Int      @default(0) @map("views_count")
+  lastSyncedAt  DateTime @default(now()) @map("last_synced_at")
+
+  target        PostTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  post          Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  comments      SocialMediaComment[]
+  likes         SocialMediaLike[]
+  shares        SocialMediaShare[]
+
+  @@index([postId])
+  @@map("social_media_engagements")
+}
+
+model SocialMediaComment {
+  id               String   @id @default(uuid()) @db.Uuid
+  engagementId     String   @db.Uuid @map("engagement_id")
+  externalId       String?  @map("external_id")
+  platform         String
+  authorName       String   @map("author_name")
+  authorHandle     String?  @map("author_handle")
+  authorAvatarUrl  String?  @map("author_avatar_url")
+  authorProfileUrl String?  @map("author_profile_url")
+  content          String
+  likeCount        Int      @default(0) @map("like_count")
+  publishedAt      DateTime @default(now()) @map("published_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  engagement       SocialMediaEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@map("social_media_comments")
+}
+
+model SocialMediaLike {
+  id               String   @id @default(uuid()) @db.Uuid
+  engagementId     String   @db.Uuid @map("engagement_id")
+  externalId       String?  @map("external_id")
+  platform         String
+  authorName       String   @map("author_name")
+  authorHandle     String?  @map("author_handle")
+  authorAvatarUrl  String?  @map("author_avatar_url")
+  authorProfileUrl String?  @map("author_profile_url")
+  likedAt          DateTime @default(now()) @map("liked_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  engagement       SocialMediaEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@map("social_media_likes")
+}
+
+model SocialMediaShare {
+  id               String   @id @default(uuid()) @db.Uuid
+  engagementId     String   @db.Uuid @map("engagement_id")
+  externalId       String?  @map("external_id")
+  platform         String
+  authorName       String   @map("author_name")
+  authorHandle     String?  @map("author_handle")
+  authorAvatarUrl  String?  @map("author_avatar_url")
+  authorProfileUrl String?  @map("author_profile_url")
+  note             String?
+  sharedAt         DateTime @default(now()) @map("shared_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  engagement       SocialMediaEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@map("social_media_shares")
+}

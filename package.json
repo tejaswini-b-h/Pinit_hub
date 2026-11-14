@@ -1,0 +1,16 @@
+{
+  "name": "pinithub-publish",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm --workspace apps/api run dev",
+    "dev:api": "npm --workspace apps/api run dev",
+    "dev:web": "npm --workspace apps/web run dev",
+    "test": "npm --workspace apps/api test",
+    "mock": "npm --workspace apps/api run mock",
+    "start:api": "npm --workspace apps/api run start",
+    "start:worker": "npm --workspace apps/api run worker"
+  }
+}

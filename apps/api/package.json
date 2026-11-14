@@ -1,0 +1,46 @@
+{
+  "name": "api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "prisma generate",
+    "dev": "tsx watch src/index.ts",
+    "worker": "tsx src/worker/index.ts",
+    "mock": "tsx tools/mock-platform/server.ts",
+    "bridge": "tsx tools/mock-pinithub/server.ts",
+    "test": "jest --testPathIgnorePatterns tests/chaos tests/api",
+    "test:api": "jest tests/api --runInBand",
+    "test:chaos": "jest tests/chaos --runInBand",
+    "migrate": "prisma migrate deploy",
+    "seed:mock": "tsx scripts/seed-mock.ts",
+    "load-test": "tsx scripts/load-test.ts",
+    "publish-n": "tsx scripts/publish-n.ts",
+    "security": "bash ../../scripts/security-scan.sh",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express-rate-limit": "^7.4.0",
+    "express": "^4.19.2",
+    "pino": "^9.4.0",
+    "zod": "^4.6.7",
+    "@prisma/adapter-pg": "6.19.3",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.14.0",
+    "jest": "^29.7.0",
+    "prisma": "6.19.3",
+    "ts-jest": "^29.2.5",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "@types/pg": "^8.11.0"
+  }
+}

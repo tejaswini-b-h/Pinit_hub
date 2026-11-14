@@ -1,0 +1,34 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: pinithub_test }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pinithub_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/pinithub_test
+      TOKEN_ENCRYPTION_KEY: ZmFrZS1rZXktZm9yLWNpLW9ubHktMzItYnl0ZXMhISE=   # throwaway key for CI only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: npx prisma generate
+        working-directory: apps/api
+      - run: npx prisma migrate deploy        # creates tables and applies RLS
+        working-directory: apps/api
+      - run: npx tsc --noEmit
+        working-directory: apps/api
+      - run: npm test --workspace api          # unit tests
+      - run: npm run test:api --workspace api  # tests against the database
+      - run: npm run test:chaos --workspace api # chaos (100 publishes, random kills) + schedule accuracy
+      - run: npm run build --workspace web
+      - run: npm test --workspace web
+      - run: bash scripts/security-scan.sh

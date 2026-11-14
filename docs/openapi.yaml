@@ -1,0 +1,107 @@
+openapi: 3.0.3
+info:
+  title: PinITHUB Publish API
+  version: 1.0.0
+  description: |
+    Write once, publish protected content to many platforms, exactly once.
+    All /v1/publish routes (except the OAuth callback) need `Authorization: Bearer <Supabase access token>`.
+    Every query is filtered by the signed-in user; other users' data returns 404.
+servers: [{ url: http://localhost:4000 }]
+security: [{ bearer: [] }]
+paths:
+  /v1/publish/platforms:
+    get: { summary: 'Platform limits (used by the composer for live counters)', responses: { '200': { description: 'List of { id, rules }' } } }
+  /v1/publish/accounts:
+    get: { summary: 'Connected accounts and status (never returns tokens)', responses: { '200': { description: Array of Account } } }
+  /v1/publish/accounts/{platform}/connect:
+    get:
+      summary: Start OAuth (platform = linkedin | facebook). Random single-use state, valid 10 minutes.
+      parameters: [{ $ref: '#/components/parameters/platform' }]
+      responses: { '200': { description: '{ url }' } }
+  /v1/publish/accounts/{platform}/callback:
+    get:
+      summary: Finish OAuth. Called by the browser, no bearer token; the owner comes from the stored state.
+      security: []
+      parameters: [{ $ref: '#/components/parameters/platform' }, { name: code, in: query, schema: { type: string } }, { name: state, in: query, schema: { type: string } }]
+      responses: { '302': { description: Redirect to the accounts page } }
+  /v1/publish/accounts/credentials:
+    post:
+      summary: Connect Bluesky (handle + app password) or Telegram (bot token + channel). Credentials are verified, then stored encrypted.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [platform, a, b], properties: { platform: { enum: [bluesky, telegram] }, a: { type: string }, b: { type: string } } } } } }
+      responses: { '201': { description: Connected }, '422': { description: Platform rejected the credentials } }
+  /v1/publish/accounts/{id}:
+    delete: { summary: 'Disconnect: deletes the stored login and cancels queued posts for the account', parameters: [{ $ref: '#/components/parameters/id' }], responses: { '204': { description: Done }, '404': { description: Not yours } } }
+  /v1/publish/media/upload-url:
+    post:
+      summary: Signed upload slot for an image (JPEG, PNG, GIF; up to 20 MB). Upload with the returned token; the file type is checked from its bytes at publish time.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mime, bytes], properties: { mime: { type: string }, bytes: { type: integer } } } } } }
+      responses: { '201': { description: '{ path, token }' } }
+  /v1/publish/assets:
+    get: { summary: 'Protected files from PinITHUB My Assets (through the bridge)', responses: { '200': { description: Array of Asset } } }
+  /v1/publish/assets/{id}/history:
+    get: { summary: 'Where this asset was published (platform, time, link)', parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Array of HistoryRow } } }
+  /v1/publish/validate:
+    post: { summary: Check a draft against every selected platform before sending, requestBody: { $ref: '#/components/requestBodies/Draft' }, responses: { '200': { description: '{ problems: { <accountId>: [string], _draft: [string] } }' } } }
+  /v1/publish/posts:
+    post:
+      summary: Create a post and one target per platform in one transaction. Same Idempotency-Key = same post (200), never a second one.
+      parameters: [{ name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 100 } }]
+      requestBody: { $ref: '#/components/requestBodies/Draft' }
+      responses: { '201': { description: '{ postId, targets }' }, '200': { description: Already created with this key }, '400': { description: Missing key or invalid body }, '422': { description: '{ problems } validation failed; nothing saved' } }
+    get:
+      summary: Dashboard and calendar list
+      parameters:
+        - { name: status, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: scheduledFrom, in: query, schema: { type: string, format: date-time } }
+        - { name: scheduledTo, in: query, schema: { type: string, format: date-time } }
+      responses: { '200': { description: 'Array of Post with targets' } }
+  /v1/publish/posts/{id}:
+    get: { summary: 'Post with targets and every attempt', parameters: [{ $ref: '#/components/parameters/id' }], responses: { '200': { description: Post }, '404': { description: Not yours } } }
+    patch:
+      summary: Edit text or time while every target is still Scheduled
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { body: { type: string }, scheduledAt: { type: string, format: date-time }, timezone: { type: string, description: IANA zone name } } } } } }
+      responses: { '200': { description: Saved }, '409': { description: Already publishing }, '422': { description: Time is in the past } }
+    delete: { summary: Cancel the unpublished targets, parameters: [{ $ref: '#/components/parameters/id' }], responses: { '204': { description: Cancelled } } }
+  /v1/publish/targets/{id}/retry:
+    post:
+      summary: Manual retry of a Failed, Blocked or Needs-reconnect target, optionally with edited text
+      parameters: [{ $ref: '#/components/parameters/id' }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { text: { type: string } } } } } }
+      responses: { '202': { description: Queued }, '409': { description: Nothing to retry, or reconnect first }, '422': { description: Edited text fails the platform rules } }
+  /v1/publish/stats:
+    get: { summary: 'Counts per status for the dashboard tiles', parameters: [{ name: days, in: query, schema: { type: integer, default: 7 } }], responses: { '200': { description: 'Counts keyed by status' } } }
+  /v1/publish/best-time:
+    get: { summary: 'Suggested hour (UTC) from the owners own past results', parameters: [{ name: platform, in: query, required: true, schema: { type: string } }], responses: { '200': { description: '{ suggestion: { hourUtc, successRate, samples } | null, basis }' } } }
+  /v1/publish/events:
+    get: { summary: 'Live status as server-sent events (event target, with an array of changed targets)', responses: { '200': { description: text/event-stream } } }
+components:
+  securitySchemes: { bearer: { type: http, scheme: bearer } }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    platform: { name: platform, in: path, required: true, schema: { type: string, enum: [linkedin, facebook] } }
+  requestBodies:
+    Draft:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [body, accountIds]
+            properties:
+              body: { type: string }
+              accountIds: { type: array, items: { type: string, format: uuid }, minItems: 1 }
+              overrides: { type: object, additionalProperties: { type: string }, description: 'accountId -> caption for that platform' }
+              mediaPaths: { type: array, items: { type: string } }
+              assetId: { type: string, description: PinITHUB asset id; its protected copy is published }
+              scheduledAt: { type: string, format: date-time, description: UTC }
+              timezone: { type: string, description: IANA zone name }
+x-status-values: [SCHEDULED, QUEUED, PUBLISHING, PUBLISHED, RETRYING, NEEDS_RECONNECT, FAILED, BLOCKED, CANCELLED]
+x-asset-bridge:
+  description: |
+    Implemented by PinITHUB (a mock server in tools/mock-pinithub this week). Requests carry `x-owner-id`.
+    GET  /assets                       -> [{ id, name, owner, url, mime, width, height, bytes }]
+    GET  /assets/{id}/protected-copy   -> { id, name, owner, url, mime, width, height, bytes }  (owner must equal x-owner-id, otherwise the publisher refuses)
+    POST /assets/{id}/events           -> 202. Body { targetId, platform, url, publishedAt }. MUST be idempotent on targetId: the publisher retries until it gets a 2xx.
