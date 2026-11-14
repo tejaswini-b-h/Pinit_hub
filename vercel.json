@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "projects": [
+    {
+      "src": "apps/web",
+      "use": "@vercel/static-build",
+      "buildCommand": "npm install && npm --workspace apps/web run build",
+      "outputDirectory": "apps/web/.next"
+    },
+    {
+      "src": "apps/api",
+      "use": "@vercel/node",
+      "buildCommand": "npm install && npm --workspace apps/api run build",
+      "outputDirectory": "apps/api/dist"
+    }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "apps/api/api/$1.js" },
+    { "src": "/(.*)", "dest": "apps/web/$1" }
+  ],
+  "maxDuration": 60
+}
