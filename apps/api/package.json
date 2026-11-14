@@ -17,7 +17,7 @@
     "publish-n": "tsx scripts/publish-n.ts",
     "security": "bash ../../scripts/security-scan.sh",
     "start": "node dist/src/index.js",
-    "build": "tsc -p tsconfig.json"
+    "build": "prisma generate && tsc -p tsconfig.json"
   },
   "dependencies": {
     "@prisma/adapter-pg": "6.19.3",
